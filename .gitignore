@@ -1,0 +1,33 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+.venv/
+
+# MLflow
+mlruns/
+
+# Datasets (too large for git — download from PhysioNet)
+mit-bih-arrhythmia-database-1.0.0/
+incartdb/
+
+# Claude Code
+.claude/
+context/
+CLAUDE.md
+
+# OS
+.DS_Store
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Misc
+info for synthetic ecg.txt
+polar-h10-research.md
