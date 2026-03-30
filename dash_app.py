@@ -19,7 +19,6 @@ import numpy as np
 import pandas as pd
 import joblib
 import torch
-import torch.nn as nn
 import wfdb
 from dash import Dash, dcc, html, callback, Input, Output, State, no_update, ctx
 import dash_bootstrap_components as dbc
@@ -30,53 +29,7 @@ from ecg_monitor.pipeline import (
     bandpass_filter, process_single_record,
 )
 from ecg_monitor.transforms import apply_transforms
-
-
-# =============================================================================
-# Hybrid CNN model definition
-# =============================================================================
-
-class HybridCNN(nn.Module):
-    """1D-CNN on waveform concatenated with tabular features before classifier."""
-    def __init__(self, seq_len, n_tabular, num_classes):
-        super().__init__()
-        self.wf_len = seq_len
-        self.waveform_branch = nn.Sequential(
-            nn.Conv1d(1, 32, kernel_size=9, padding=4),
-            nn.BatchNorm1d(32),
-            nn.ReLU(),
-            nn.MaxPool1d(2),
-            nn.Conv1d(32, 64, kernel_size=7, padding=3),
-            nn.BatchNorm1d(64),
-            nn.ReLU(),
-            nn.MaxPool1d(2),
-            nn.Conv1d(64, 128, kernel_size=5, padding=2),
-            nn.BatchNorm1d(128),
-            nn.ReLU(),
-            nn.AdaptiveAvgPool1d(1),
-            nn.Flatten(),
-        )
-        self.tabular_branch = nn.Sequential(
-            nn.Linear(n_tabular, 64),
-            nn.BatchNorm1d(64),
-            nn.ReLU(),
-            nn.Dropout(0.3),
-        )
-        self.classifier = nn.Sequential(
-            nn.Dropout(0.4),
-            nn.Linear(128 + 64, 64),
-            nn.ReLU(),
-            nn.Dropout(0.3),
-            nn.Linear(64, num_classes),
-        )
-
-    def forward(self, x):
-        wf = x[:, :self.wf_len].unsqueeze(1)
-        tab = x[:, self.wf_len:]
-        wf_feat = self.waveform_branch(wf)
-        tab_feat = self.tabular_branch(tab)
-        combined = torch.cat([wf_feat, tab_feat], dim=1)
-        return self.classifier(combined)
+from ecg_monitor.models import HybridCNN
 
 # =============================================================================
 # Constants
@@ -87,47 +40,93 @@ LABEL_NAME = {'N': 'Normal', 'S': 'Supraventricular', 'V': 'Ventricular'}
 
 INTERVAL_MS = 50          # tick callback fires every 50 ms
 WINDOW_SECONDS = 8        # visible ECG window width
-PLAYBACK_SPEED = 1.0      # 1.0 = real-time
 SPLICE_DELAY_S = 5.0      # seconds after slider change before splice triggers
 
 # =============================================================================
-# Data loading (runs once at startup — loads pre-trained artifacts)
+# Data loading
 # =============================================================================
 
 MODELS_DIR = 'models'
 
-print("Loading pre-trained model artifacts...")
-clf = joblib.load(f'{MODELS_DIR}/gb_48feat.joblib')
-pca = joblib.load(f'{MODELS_DIR}/qrs_pca.joblib')
-pw_pca = joblib.load(f'{MODELS_DIR}/pw_pca.joblib')
-frozen_baselines = joblib.load(f'{MODELS_DIR}/frozen_baselines.joblib')
-baselines = joblib.load(f'{MODELS_DIR}/baselines.joblib')
-record_info = joblib.load(f'{MODELS_DIR}/record_info.joblib')
-
-# Hybrid CNN artifacts
-feature_scaler = joblib.load(f'{MODELS_DIR}/feature_scaler.joblib')
-cnn_metadata = joblib.load(f'{MODELS_DIR}/hybrid_cnn_metadata.joblib')
-hybrid_cnn = HybridCNN(
-    seq_len=cnn_metadata['wf_len'],
-    n_tabular=cnn_metadata['n_tabular'],
-    num_classes=cnn_metadata['num_classes'],
-)
-hybrid_cnn.load_state_dict(
-    torch.load(f'{MODELS_DIR}/hybrid_cnn.pt', map_location='cpu', weights_only=True))
-hybrid_cnn.eval()
-cnn_classes = cnn_metadata['classes']
-
-# Cache raw signals and annotations from MIT-BIH
+# Module-level state populated by _setup()
+clf = None
+pca = None
+pw_pca = None
+frozen_baselines = {}
+baselines = {}
+record_info = {}
+feature_scaler = None
+hybrid_cnn = None
+cnn_classes = []
 raw_signals = {}
 raw_annotations = {}
-for rid in sorted(record_info.keys()):
-    record = wfdb.rdrecord(f'{DATA_DIR}/{rid}')
-    ann = wfdb.rdann(f'{DATA_DIR}/{rid}', 'atr')
-    raw_signals[rid] = {'signal': record.p_signal[:, 0].copy(), 'fs': record.fs}
-    raw_annotations[rid] = {'peaks': ann.sample.copy(), 'symbols': list(ann.symbol)}
+record_ids = []
 
-record_ids = sorted(record_info.keys())
-print(f"Ready. {len(record_ids)} records loaded.")
+
+def _setup():
+    """Load pre-trained models and cache raw ECG data.
+
+    Called once at startup. Gives clear error messages if artifacts are missing.
+    """
+    global clf, pca, pw_pca, frozen_baselines, baselines, record_info
+    global feature_scaler, hybrid_cnn, cnn_classes
+    global raw_signals, raw_annotations, record_ids
+
+    import os
+    import sys
+
+    # Check models directory
+    required_models = [
+        'gb_48feat.joblib', 'qrs_pca.joblib', 'pw_pca.joblib',
+        'frozen_baselines.joblib', 'baselines.joblib', 'record_info.joblib',
+        'feature_scaler.joblib', 'hybrid_cnn.pt', 'hybrid_cnn_metadata.joblib',
+    ]
+    missing = [f for f in required_models if not os.path.exists(f'{MODELS_DIR}/{f}')]
+    if missing:
+        print(f"\nError: Missing model artifacts in {MODELS_DIR}/:", file=sys.stderr)
+        for f in missing:
+            print(f"  - {f}", file=sys.stderr)
+        print("\nRun the export cells in Classification_Experiments.ipynb and "
+              "DL_Model_Experiments.ipynb to generate these.", file=sys.stderr)
+        sys.exit(1)
+
+    # Check dataset
+    if not os.path.isdir(DATA_DIR):
+        print(f"\nError: MIT-BIH dataset not found at {DATA_DIR}/", file=sys.stderr)
+        print("Download from PhysioNet: https://physionet.org/content/mitdb/1.0.0/",
+              file=sys.stderr)
+        sys.exit(1)
+
+    print("Loading pre-trained model artifacts...")
+    clf = joblib.load(f'{MODELS_DIR}/gb_48feat.joblib')
+    pca = joblib.load(f'{MODELS_DIR}/qrs_pca.joblib')
+    pw_pca = joblib.load(f'{MODELS_DIR}/pw_pca.joblib')
+    frozen_baselines = joblib.load(f'{MODELS_DIR}/frozen_baselines.joblib')
+    baselines = joblib.load(f'{MODELS_DIR}/baselines.joblib')
+    record_info = joblib.load(f'{MODELS_DIR}/record_info.joblib')
+
+    # Hybrid CNN artifacts
+    feature_scaler = joblib.load(f'{MODELS_DIR}/feature_scaler.joblib')
+    cnn_metadata = joblib.load(f'{MODELS_DIR}/hybrid_cnn_metadata.joblib')
+    hybrid_cnn = HybridCNN(
+        seq_len=cnn_metadata['wf_len'],
+        n_tabular=cnn_metadata['n_tabular'],
+        num_classes=cnn_metadata['num_classes'],
+    )
+    hybrid_cnn.load_state_dict(
+        torch.load(f'{MODELS_DIR}/hybrid_cnn.pt', map_location='cpu', weights_only=True))
+    hybrid_cnn.eval()
+    cnn_classes = cnn_metadata['classes']
+
+    # Cache raw signals and annotations from MIT-BIH
+    for rid in sorted(record_info.keys()):
+        record = wfdb.rdrecord(f'{DATA_DIR}/{rid}')
+        ann = wfdb.rdann(f'{DATA_DIR}/{rid}', 'atr')
+        raw_signals[rid] = {'signal': record.p_signal[:, 0].copy(), 'fs': record.fs}
+        raw_annotations[rid] = {'peaks': ann.sample.copy(), 'symbols': list(ann.symbol)}
+
+    record_ids.extend(sorted(record_info.keys()))
+    print(f"Ready. {len(record_ids)} records loaded.")
 
 
 # =============================================================================
@@ -137,6 +136,7 @@ print(f"Ready. {len(record_ids)} records loaded.")
 _stream = {
     'record_id': None,
     'model_type': 'gb',  # 'gb' or 'hybrid_cnn'
+    'playback_speed': 1.0,
     'fs': 360,
 
     # Original record data (immutable after record load)
@@ -339,7 +339,7 @@ def _get_current_sample():
     if not _stream['is_playing'] or _stream['anchor_time'] is None:
         return _stream['anchor_sample']
     elapsed = time.time() - _stream['anchor_time']
-    return _stream['anchor_sample'] + int(elapsed * _stream['fs'] * PLAYBACK_SPEED)
+    return _stream['anchor_sample'] + int(elapsed * _stream['fs'] * _stream['playback_speed'])
 
 
 def _extend_one_cycle():
@@ -984,13 +984,12 @@ def on_config_change(record_id, model_type, hr_change, hrv_comp, n_pauses, af_ir
     prevent_initial_call=True,
 )
 def playback_controls(play_clicks, pause_clicks, reset_clicks, speed):
-    global PLAYBACK_SPEED
     trigger = ctx.triggered_id
 
     if trigger == "speed-select":
         # Re-anchor at current position with new speed
         _stream['anchor_sample'] = _get_current_sample()
-        PLAYBACK_SPEED = speed
+        _stream['playback_speed'] = speed
         if _stream['is_playing']:
             _stream['anchor_time'] = time.time()
     elif trigger == "btn-play":
@@ -1127,4 +1126,5 @@ def tick(n_intervals):
 # =============================================================================
 
 if __name__ == '__main__':
+    _setup()
     app.run(debug=True, port=8050)
