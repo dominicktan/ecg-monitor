@@ -572,9 +572,6 @@ def build_df_all(data_dir=DATA_DIR, paced_records=PACED_RECORDS,
     """
     all_records = open(f'{data_dir}/RECORDS').read().strip().split('\n')
     all_features = []
-    # Store per-record P-wave data for post-concat processing
-    pw_fixed_per_rec = {}   # rec_id -> list of waveforms
-    pw_adaptive_per_rec = {}  # rec_id -> DataFrame
 
     for rec_id in all_records:
         if rec_id in paced_records:
@@ -724,7 +721,7 @@ def build_df_all(data_dir=DATA_DIR, paced_records=PACED_RECORDS,
 
     if verbose:
         print(f"\nTotal: {len(df_all)} beats")
-        print(f"Clinical label distribution:")
+        print("Clinical label distribution:")
         print(df_all['clinical_label'].value_counts().to_string())
         print(f"QRS PCA variance: {sum(pca.explained_variance_ratio_)*100:.1f}%")
         print(f"P-wave PCA variance: {sum(pw_pca.explained_variance_ratio_)*100:.1f}%")
@@ -884,6 +881,11 @@ def compute_session_metrics(df_session, fs=360, label_col='clinical_label'):
         mean_r_amplitude = np.nan
 
     all_rr = df_session['rr_prev'].values
+    all_rr_valid = all_rr[(all_rr > 0.2) & (all_rr < 3.0)]
+    if len(all_rr_valid) >= 2:
+        rr_cv_pct = 100.0 * np.std(all_rr_valid, ddof=1) / np.mean(all_rr_valid)
+    else:
+        rr_cv_pct = np.nan
     pause_count_2s = int(np.sum(all_rr > 2.0))
     pause_count_3s = int(np.sum(all_rr > 3.0))
     max_rr_interval_s = float(np.max(all_rr)) if len(all_rr) > 0 else np.nan
@@ -906,6 +908,7 @@ def compute_session_metrics(df_session, fs=360, label_col='clinical_label'):
         'mean_qrs_width_ms': mean_qrs_width_ms,
         'std_qrs_width_ms': std_qrs_width_ms,
         'mean_r_amplitude': mean_r_amplitude,
+        'rr_cv_pct': rr_cv_pct,
         'pause_count_2s': pause_count_2s,
         'pause_count_3s': pause_count_3s,
         'max_rr_interval_s': max_rr_interval_s,

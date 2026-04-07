@@ -1,0 +1,26 @@
+# Data directories (downloaded at runtime via entrypoint)
+mit-bih-arrhythmia-database-1.0.0/
+incartdb/
+
+# Notebooks and experiment artifacts
+*.ipynb
+mlruns/
+
+# Git and IDE
+.git/
+.github/
+.gitignore
+
+# Python caches
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+
+# Archive and context (not needed at runtime)
+archive/
+context/
+CLAUDE.md
+
+# OS files
+.DS_Store

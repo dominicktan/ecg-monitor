@@ -409,7 +409,7 @@ def apply_transforms(signal, fs, r_peaks, labels, params):
     if params.get('hrv_compression', 0) > 0:
         segments = compress_hrv(segments, params['hrv_compression'])
     if params.get('n_pauses', 0) > 0:
-        segments = insert_pauses(segments, fs, params['n_pauses'], rng)
+        segments = insert_pauses(segments, fs, int(params['n_pauses']), rng)
     if params.get('af_irregularity', 0) > 0:
         segments = add_af_irregularity(segments, params['af_irregularity'], rng)
     if abs(params.get('hr_factor', 1.0) - 1.0) >= 0.01:
