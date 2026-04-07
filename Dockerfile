@@ -25,7 +25,7 @@ RUN uv sync --frozen --no-dev
 # Download MIT-BIH data if missing on startup, then run Streamlit
 ENTRYPOINT ["scripts/entrypoint.sh"]
 
-ENV PORT=8501
+ENV PORT=7860
 EXPOSE ${PORT}
 
 CMD uv run --no-dev streamlit run streamlit_app.py \
