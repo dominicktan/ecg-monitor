@@ -3,6 +3,7 @@ mit-bih-arrhythmia-database-1.0.0/
 incartdb/
 
 # Notebooks and experiment artifacts
+notebooks/
 *.ipynb
 mlruns/
 
