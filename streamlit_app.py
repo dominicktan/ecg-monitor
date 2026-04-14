@@ -45,7 +45,20 @@ st.caption("Simulate disease progression, detect metric trends, and review clini
 
 @st.cache_resource(show_spinner="Loading models and data...")
 def load_context() -> SimulationContext:
+    _ensure_data()
     return SimulationContext()
+
+
+def _ensure_data():
+    """Download MIT-BIH dataset if not already present."""
+    import os
+    data_dir = "mit-bih-arrhythmia-database-1.0.0"
+    if os.path.exists(data_dir) and any(f.endswith(".dat") for f in os.listdir(data_dir)):
+        return
+    with st.spinner("Downloading MIT-BIH dataset from PhysioNet (~100 MB)..."):
+        import wfdb
+        os.makedirs(data_dir, exist_ok=True)
+        wfdb.dl_database("mitdb", dl_dir=data_dir)
 
 
 # ============================================================================
