@@ -1,5 +1,7 @@
 # ECG Monitor
 
+**[Live Demo](http://ecg-monitor.duckdns.org)**
+
 An end-to-end ECG analysis pipeline that detects heartbeats, classifies arrhythmias, and tracks cardiac health trends over time. Designed for continuous monitoring of at-risk patients — the system simulates weeks of disease progression on real clinical ECG data and surfaces early warning alerts before conditions become critical.
 
 ## What it does
