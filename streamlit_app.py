@@ -284,7 +284,7 @@ with st.sidebar:
 
 if run_button:
     ctx = load_context()
-    with st.spinner("Running simulation... (this may take 30-60 seconds)"):
+    with st.spinner("Running simulation... (this may take a few minutes)"):
         result = run_simulation(ctx, scenario)
     st.session_state['result'] = result
 
